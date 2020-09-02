@@ -36,6 +36,10 @@ function woocommerce_paydollar_init(){
 			$this -> msg['message'] = "";
 			$this -> msg['class'] = "";
 
+			//3ds2.0
+			$this -> transaction_type = 		$this -> settings['transaction_type'];
+			$this -> challenge_pref = 		$this -> settings['challenge_pref'];
+
 			if ( version_compare( WOOCOMMERCE_VERSION, '2.0.0', '>=' ) ) {
 				add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( &$this, 'process_admin_options' ) );
 			} else {
@@ -190,7 +194,17 @@ function woocommerce_paydollar_init(){
                     'title' => __('Prefix'),
                     'type' => 'text',
                     'description' => __('Optional. Prefix for Order Reference No. (Warning: Do not use a dash "-" because the system uses it as a separator between the prefix and the order reference no.)'),
-                    'default' => __(''))
+                    'default' => __('')),
+                'transaction_type' => array(
+                    'title' => __('Transaction Type'),
+                    'type' => 'text',
+                    'description' => __('Suitable transaction type. "01" - Goods/ Service Purchase is the Default value if transaction type not provided.'),
+                    'default' => __('01')),
+                'challenge_pref' => array(
+                    'title' => __('Challenge Preference'),
+                    'type' => 'text',
+                    'description' => __('Indicates whether a challenge is requested for the transactions in 3DS2.0. If "01" - No challenge requested options are selected, the chargeback liability shift to merchant.'),
+                    'default' => __('01'))
 			);
 		}
 
@@ -212,10 +226,12 @@ function woocommerce_paydollar_init(){
 				<strong>Test Credit Cards:</strong> <br/>
 				- VISA: 4918914107195005 <br/>
 				- Master: 5422882800700007 <br/>
-				- Expiry Date: July 2030 <br/>
+				- Expiry Date: July 2015 <br/>
 				- Security Code: 123 <br/>
 				- Card Holder Name: John Doe <br/>
 				<br/>
+				<strong>3DS 2.0 Testing Cards</strong><br/>
+				<u>https://test.paydollar.com/b2cuat/eng/merchant/support/threeDSTestingCardInfo.html</u>
 			').'</p>';
 			echo '<hr/>';
 			echo '<table class="form-table">';
@@ -246,18 +262,18 @@ function woocommerce_paydollar_init(){
 
 			$order = new WC_Order($order_id);
 			
-			
+			//prefix handler
 			if($this -> prefix == ''){
 				$orderRef = $order_id;
 			}else{
 				$orderRef = $this -> prefix . '-' . $order_id;
 			}
 						
-			$success_url = esc_url( add_query_arg( 'utm_nooverride', '1', $this->get_return_url( $order ) ) );
-			$fail_url = esc_url( $order->get_cancel_order_url() );
-			$cancel_url = esc_url( $order->get_cancel_order_url() );
+			$success_url = esc_url( add_query_arg( 'utm_nooverride', '1', $this->get_return_url( $order ) ) );//get_permalink( get_option('woocommerce_thanks_page_id') );
+			$fail_url = esc_url( $order->get_cancel_order_url() );//get_permalink( get_option('woocommerce_checkout_page_id') );
+			$cancel_url = esc_url( $order->get_cancel_order_url() );//get_permalink( get_option('woocommerce_checkout_page_id') ); 
 			
-			
+			//TODO: for secureHash
 			$secureHash = '';
 			if($this -> secure_hash_secret != ''){
 				$secureHash = $this -> generatePaymentSecureHash($this -> merchant_id, $orderRef, $this -> curr_code, $order -> order_total, $this -> pay_type, $this -> secure_hash_secret);
@@ -277,9 +293,24 @@ function woocommerce_paydollar_init(){
 				'failUrl' => 		$fail_url,
 				'cancelUrl' => 		$cancel_url,						
 				'secureHash' => 	$secureHash,
-				'remark' => 		$remarks
-          	);
+				'remark' => 		$remarks,
 
+				//3ds2.0
+				'threeDSTransType' => $this -> transaction_type,
+				'threeDSChallengePreference' => $this -> challenge_pref,
+          	);
+          	// $a = new AsiapayThreeDS();
+          	include("asiapay_three_ds.php");
+
+
+          	$paramThreeDs = getAllThreeDsParam($order_id);
+          	$paydollar_args = array_merge($paydollar_args,$paramThreeDs);
+   //        	echo "<pre>";
+
+          	
+
+   //        	print_r($paydollar_args);
+			// exit;
 			$paydollar_args_array = array();
 			foreach($paydollar_args as $key => $value){
 				$paydollar_args_array[] = "<input type='hidden' name='$key' value='$value'/>";
@@ -305,7 +336,10 @@ function woocommerce_paydollar_init(){
 		 **/
 		function process_payment($order_id){
 			$order = new WC_Order($order_id);
-			
+			/*return array(
+				'result' => 'success', 
+				'redirect' => add_query_arg('order', $order->id, add_query_arg('key', $order->order_key, get_permalink(get_option('woocommerce_pay_page_id'))))
+			);*/
 			return array(
 				'result' 	=> 'success',
 				'redirect'	=> $order->get_checkout_payment_url( true )
@@ -420,6 +454,7 @@ function woocommerce_paydollar_init(){
 			if ($title) $page_list[] = $title;
 			foreach ($wp_pages as $page) {
 				$prefix = '';
+				// show indented child pages?
 				if ($indent) {
 					$has_parent = $page->post_parent;
 					while($has_parent) {
